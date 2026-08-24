@@ -239,7 +239,14 @@
     if (Math.abs(startR - fillR) < 6 && Math.abs(startG - fillG) < 6 && Math.abs(startB - fillB) < 6) return false;
 
     var tol2 = tolerance * tolerance;
-    function matches(idx) {
+    // Artwork that bleeds to the canvas edge has no drawn line right at the border,
+    // so a fill can otherwise escape around the outside and sweep through areas
+    // that were never meant to connect (e.g. sky leaking into trees down the edge).
+    // Treat a thin margin as a hard boundary, same as an outline stroke.
+    var margin = 5;
+    function matches(x, y) {
+      if (x < margin || y < margin || x >= width - margin || y >= height - margin) return false;
+      var idx = (y * width + x) * 4;
       var dr = data[idx] - startR, dg = data[idx + 1] - startG, db = data[idx + 2] - startB;
       return (dr * dr + dg * dg + db * db) <= tol2;
     }
@@ -253,19 +260,19 @@
       if (x < 0 || x >= width || y < 0 || y >= height) continue;
       var vIdx = y * width + x;
       if (visited[vIdx]) continue;
-      if (!matches(vIdx * 4)) continue;
+      if (!matches(x, y)) continue;
 
       var xl = x;
       while (xl >= 0) {
         var vi = y * width + xl;
-        if (visited[vi] || !matches(vi * 4)) break;
+        if (visited[vi] || !matches(xl, y)) break;
         xl--;
       }
       xl++;
       var xr = x;
       while (xr < width) {
         var vi2 = y * width + xr;
-        if (visited[vi2] || !matches(vi2 * 4)) break;
+        if (visited[vi2] || !matches(xr, y)) break;
         xr++;
       }
       xr--;
@@ -277,11 +284,11 @@
         data[ii3] = fillR; data[ii3 + 1] = fillG; data[ii3 + 2] = fillB; data[ii3 + 3] = 255;
         if (y > 0) {
           var upI = (y - 1) * width + xx;
-          if (!visited[upI] && matches(upI * 4)) stack.push([xx, y - 1]);
+          if (!visited[upI] && matches(xx, y - 1)) stack.push([xx, y - 1]);
         }
         if (y < height - 1) {
           var dnI = (y + 1) * width + xx;
-          if (!visited[dnI] && matches(dnI * 4)) stack.push([xx, y + 1]);
+          if (!visited[dnI] && matches(xx, y + 1)) stack.push([xx, y + 1]);
         }
       }
     }
