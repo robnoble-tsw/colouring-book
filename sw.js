@@ -1,4 +1,4 @@
-var CACHE_NAME = "colourit-cache-v2";
+var CACHE_NAME = "colourit-cache-v3";
 var ASSETS = [
   "./",
   "./index.html",
