@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>Colour It</title>
+
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Colour It">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#6d5adc">
+<meta name="description" content="A colouring book of original scenes — cars, bikes, animals and countryside.">
+
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icon-180.png">
+<link rel="icon" href="icon-192.png">
+
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<div id="app">
+
+  <!-- HOME SCREEN -->
+  <section id="home" class="screen">
+    <header class="home-header">
+      <h1>Colour It</h1>
+      <p class="subtitle">Tap a picture to start colouring</p>
+    </header>
+    <div id="gallery" class="gallery"></div>
+  </section>
+
+  <!-- COLOURING SCREEN -->
+  <section id="colour-screen" class="screen hidden">
+    <header class="colour-header">
+      <button id="backBtn" class="icon-btn" aria-label="Back to gallery">&larr; Back</button>
+      <h2 id="pictureTitle"></h2>
+      <div class="header-actions">
+        <button id="refBtn" class="icon-btn" aria-label="Show colour reference">Reference</button>
+        <button id="undoBtn" class="icon-btn" aria-label="Undo">Undo</button>
+        <button id="resetBtn" class="icon-btn" aria-label="Reset picture">Reset</button>
+      </div>
+    </header>
+
+    <div id="canvasWrap" class="canvas-wrap">
+      <div id="zoomLayer" class="zoom-layer">
+        <canvas id="paintCanvas"></canvas>
+      </div>
+      <div class="zoom-controls">
+        <button id="zoomInBtn" class="zoom-btn" aria-label="Zoom in">+</button>
+        <button id="zoomOutBtn" class="zoom-btn" aria-label="Zoom out">&minus;</button>
+        <button id="zoomResetBtn" class="zoom-btn zoom-reset" aria-label="Reset zoom">&#8634;</button>
+      </div>
+    </div>
+
+    <div id="refOverlay" class="ref-overlay hidden">
+      <img id="refImage" alt="Colour reference">
+      <button id="refCloseBtn" class="ref-close" aria-label="Close reference">&times;</button>
+    </div>
+
+    <footer class="palette-bar">
+      <div id="swatches" class="swatches"></div>
+      <label class="custom-colour" title="Pick any colour">
+        <input type="color" id="customColour" value="#ff6b6b">
+        <span class="custom-colour-swirl"></span>
+      </label>
+    </footer>
+  </section>
+
+</div>
+
+<script src="scenes.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
