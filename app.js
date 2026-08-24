@@ -657,10 +657,14 @@
       return Math.hypot(a.x - b.x, a.y - b.y);
     }
 
+    var DRAG_THRESHOLD = 6;
+    var downPos = { x: 0, y: 0 };
+
     canvasWrap.addEventListener("pointerdown", function (e) {
-      canvasWrap.setPointerCapture(e.pointerId);
+      try { canvasWrap.setPointerCapture(e.pointerId); } catch (err) {}
       pointers[e.pointerId] = { x: e.clientX, y: e.clientY };
       moved = false;
+      downPos = { x: e.clientX, y: e.clientY };
       if (Object.keys(pointers).length === 2) {
         startDist = dist(pointers);
         startScale = state.zoom.scale;
@@ -682,6 +686,8 @@
         state.zoom.scale = Math.min(4, Math.max(1, startScale * (newDist / startDist)));
         applyZoom();
       } else if (count === 1 && dragging && state.zoom.scale > 1.01) {
+        var travelled = Math.hypot(e.clientX - downPos.x, e.clientY - downPos.y);
+        if (travelled < DRAG_THRESHOLD) return;
         state.zoom.x = e.clientX - dragStart.x;
         state.zoom.y = e.clientY - dragStart.y;
         moved = true;
@@ -702,7 +708,6 @@
 
     canvasWrap.addEventListener("click", function (e) {
       if (moved) { moved = false; return; }
-      if (e.target !== canvas) return;
       handleCanvasTap(e.clientX, e.clientY);
     });
 
