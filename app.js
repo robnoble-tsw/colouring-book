@@ -312,7 +312,15 @@
     var areas = [], sumX = [], sumY = [];
     var nextLabel = 0;
 
-    function fillable(idx) {
+    // Illustrations that bleed to the canvas edge have no drawn line along the
+    // border, so open background regions (sky, road, etc.) can connect all the
+    // way around the outside and merge into one giant blob. Treat a thin margin
+    // at the edge as a boundary, same as an outline stroke, to prevent that.
+    var margin = 5;
+
+    function fillable(x, y) {
+      if (x < margin || y < margin || x >= width - margin || y >= height - margin) return false;
+      var idx = (y * width + x) * 4;
       var luma = 0.299 * data[idx] + 0.587 * data[idx + 1] + 0.114 * data[idx + 2];
       return luma >= REGION_LUMA_THRESHOLD;
     }
@@ -320,7 +328,7 @@
     for (var y = 0; y < height; y++) {
       for (var x = 0; x < width; x++) {
         var pos = y * width + x;
-        if (labels[pos] !== -1 || !fillable(pos * 4)) continue;
+        if (labels[pos] !== -1 || !fillable(x, y)) continue;
 
         var label = nextLabel++;
         var area = 0, sx = 0, sy = 0;
@@ -331,19 +339,19 @@
           var cx = pt[0], cy = pt[1];
           if (cx < 0 || cx >= width || cy < 0 || cy >= height) continue;
           var cpos = cy * width + cx;
-          if (labels[cpos] !== -1 || !fillable(cpos * 4)) continue;
+          if (labels[cpos] !== -1 || !fillable(cx, cy)) continue;
 
           var xl = cx;
           while (xl >= 0) {
             var pL = cy * width + xl;
-            if (labels[pL] !== -1 || !fillable(pL * 4)) break;
+            if (labels[pL] !== -1 || !fillable(xl, cy)) break;
             xl--;
           }
           xl++;
           var xr = cx;
           while (xr < width) {
             var pR = cy * width + xr;
-            if (labels[pR] !== -1 || !fillable(pR * 4)) break;
+            if (labels[pR] !== -1 || !fillable(xr, cy)) break;
             xr++;
           }
           xr--;
@@ -354,11 +362,11 @@
             area++; sx += xx; sy += cy;
             if (cy > 0) {
               var up = (cy - 1) * width + xx;
-              if (labels[up] === -1 && fillable(up * 4)) stack.push([xx, cy - 1]);
+              if (labels[up] === -1 && fillable(xx, cy - 1)) stack.push([xx, cy - 1]);
             }
             if (cy < height - 1) {
               var dn = (cy + 1) * width + xx;
-              if (labels[dn] === -1 && fillable(dn * 4)) stack.push([xx, cy + 1]);
+              if (labels[dn] === -1 && fillable(xx, cy + 1)) stack.push([xx, cy + 1]);
             }
           }
         }
@@ -427,6 +435,21 @@
       histograms[lbl].forEach(function (entry) {
         if (!best || entry.count > best.count) best = entry;
       });
+      // A very dark mode on a large region usually means it's actually several
+      // visually distinct areas merged together (no split found a clean boundary)
+      // and the dark patch just happened to be the biggest single cluster. Rather
+      // than paint the whole thing black, fall back to a substantial brighter
+      // cluster if one exists — a compromise colour reads much better than that.
+      if (best && seg.areas[lbl] > seg.width * seg.height * 0.1) {
+        var bestLuma = 0.299 * best.sumR / best.count + 0.587 * best.sumG / best.count + 0.114 * best.sumB / best.count;
+        if (bestLuma < 60) {
+          histograms[lbl].forEach(function (entry) {
+            if (entry.count < best.count * 0.25) return;
+            var luma = 0.299 * entry.sumR / entry.count + 0.587 * entry.sumG / entry.count + 0.114 * entry.sumB / entry.count;
+            if (luma > bestLuma + 40) { best = entry; bestLuma = luma; }
+          });
+        }
+      }
       colours.push(best
         ? [Math.round(best.sumR / best.count), Math.round(best.sumG / best.count), Math.round(best.sumB / best.count)]
         : [255, 255, 255]);
@@ -481,6 +504,100 @@
     });
 
     return { regionToNumber: regionToNumber, palette: palette, centroids: centroids };
+  }
+
+  // Some illustrations have no hard line at all between two areas — e.g. a bright
+  // road blending straight into a bright sky at the horizon — so no line-art
+  // brightness threshold can separate them. For any region that comes out
+  // implausibly large, re-divide its pixels using the REFERENCE PHOTO's own
+  // colours instead: seed a colour-tolerance flood fill (the same technique
+  // already used for regular tap-to-fill) from one pixel, grow it through
+  // neighbouring same-region pixels while the photo colour stays close to the
+  // seed, and repeat on whatever's left over. This finds "the blue bit" and
+  // "the tarmac bit" directly from what the photo actually shows there, which
+  // works even when the line art itself gives no clue where the split is.
+  function splitOversizedRegions(seg, refData) {
+    var width = seg.width, height = seg.height, rd = refData.data;
+    var maxArea = width * height * 0.12;
+    var labels = seg.labels;
+    var areas = seg.areas.slice(), sumX = seg.sumX.slice(), sumY = seg.sumY.slice();
+    var nextLabel = seg.count;
+    var SPLIT_TOLERANCE = 40;
+
+    function colourAt(i) {
+      var idx = i * 4;
+      return [rd[idx], rd[idx + 1], rd[idx + 2]];
+    }
+
+    function floodByColour(remaining, seedIndex) {
+      var seedColour = colourAt(seedIndex);
+      var tol2 = SPLIT_TOLERANCE * SPLIT_TOLERANCE;
+      function matches(i) {
+        if (!remaining[i]) return false;
+        var c = colourAt(i);
+        var dr = c[0] - seedColour[0], dg = c[1] - seedColour[1], db = c[2] - seedColour[2];
+        return (dr * dr + dg * dg + db * db) <= tol2;
+      }
+      var pixels = [], area = 0, sx = 0, sy = 0;
+      var stack = [[seedIndex % width, (seedIndex / width) | 0]];
+      var visited = new Uint8Array(width * height);
+      while (stack.length) {
+        var pt = stack.pop(), cx = pt[0], cy = pt[1];
+        if (cx < 0 || cx >= width || cy < 0 || cy >= height) continue;
+        var cpos = cy * width + cx;
+        if (visited[cpos] || !matches(cpos)) continue;
+        var xl = cx;
+        while (xl >= 0) { var pL = cy * width + xl; if (visited[pL] || !matches(pL)) break; xl--; }
+        xl++;
+        var xr = cx;
+        while (xr < width) { var pR = cy * width + xr; if (visited[pR] || !matches(pR)) break; xr++; }
+        xr--;
+        for (var xx = xl; xx <= xr; xx++) {
+          var vp = cy * width + xx;
+          visited[vp] = 1; pixels.push(vp); area++; sx += xx; sy += cy;
+          if (cy > 0) { var up = (cy - 1) * width + xx; if (!visited[up] && matches(up)) stack.push([xx, cy - 1]); }
+          if (cy < height - 1) { var dn = (cy + 1) * width + xx; if (!visited[dn] && matches(dn)) stack.push([xx, cy + 1]); }
+        }
+      }
+      return { pixels: pixels, area: area, sumX: sx, sumY: sy };
+    }
+
+    function trySplit(label, depth) {
+      if (depth > 6) return;
+      var remaining = new Uint8Array(width * height);
+      var count = 0, firstIndex = -1;
+      for (var i = 0; i < labels.length; i++) {
+        if (labels[i] === label) {
+          remaining[i] = 1; count++;
+          if (firstIndex === -1) firstIndex = i;
+        }
+      }
+      if (!count) return;
+
+      var guard = 0;
+      while (firstIndex !== -1 && guard++ < 60) {
+        var part = floodByColour(remaining, firstIndex);
+        if (part.area >= REGION_MIN_AREA) {
+          var newLabel = nextLabel++;
+          part.pixels.forEach(function (p) { labels[p] = newLabel; remaining[p] = 0; });
+          areas.push(part.area); sumX.push(part.sumX); sumY.push(part.sumY);
+          if (part.area > maxArea && part.area < count * 0.95) trySplit(newLabel, depth + 1);
+        } else {
+          // Too small to bother with as its own colour — drop it (leave unfillable)
+          // rather than looping on it forever.
+          part.pixels.forEach(function (p) { remaining[p] = 0; labels[p] = -1; });
+        }
+        firstIndex = -1;
+        for (var j = 0; j < remaining.length; j++) { if (remaining[j]) { firstIndex = j; break; } }
+      }
+      areas[label] = 0;
+    }
+
+    for (var l = 0; l < seg.count; l++) {
+      if (areas[l] > maxArea) trySplit(l, 0);
+    }
+
+    return { labels: labels, count: nextLabel, areas: areas, sumX: sumX, sumY: sumY, width: width, height: height };
   }
 
   function getRegionData(scene) {
