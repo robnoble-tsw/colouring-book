@@ -381,7 +381,7 @@
       var idx = i * 4;
       var r = rd[idx], g = rd[idx + 1], b = rd[idx + 2];
       var luma = 0.299 * r + 0.587 * g + 0.114 * b;
-      if (luma < 35) continue; // likely outline bleed / deep shadow, not the region's true colour
+      if (luma < 60) continue; // likely outline bleed or deep shadow, not the region's true colour
 
       var key = (r >> 3) + "_" + (g >> 3) + "_" + (b >> 3);
       var hist = histograms[label];
@@ -393,11 +393,19 @@
       }
     }
 
+    // Among the largest clusters for a region, prefer the brightest (best-lit) one —
+    // photo regions often span both sunlit and shadowed patches of the same surface,
+    // and the shadow cluster winning on raw pixel count reads as "muddy" rather than
+    // the colour a person would actually call that surface.
     var colours = [];
     for (var lbl = 0; lbl < seg.count; lbl++) {
-      var best = null;
-      histograms[lbl].forEach(function (entry) {
-        if (!best || entry.count > best.count) best = entry;
+      var entries = Array.from(histograms[lbl].values());
+      var maxCount = entries.reduce(function (m, e) { return Math.max(m, e.count); }, 0);
+      var contenders = entries.filter(function (e) { return e.count >= maxCount * 0.3; });
+      var best = null, bestLuma = -1;
+      contenders.forEach(function (e) {
+        var luma = e.sumR / e.count + e.sumG / e.count + e.sumB / e.count;
+        if (luma > bestLuma) { bestLuma = luma; best = e; }
       });
       colours.push(best
         ? [Math.round(best.sumR / best.count), Math.round(best.sumG / best.count), Math.round(best.sumB / best.count)]
