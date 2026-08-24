@@ -13,10 +13,10 @@
   var FILL_TOLERANCE = 45;
   var MAX_UNDO = 15;
   var REGION_LUMA_THRESHOLD = 215;
-  var REGION_MIN_AREA = 1800;
-  var REGION_MAX_AREA_FRACTION = 0.3;
+  var REGION_MIN_AREA = 45;
+  var REGION_MAX_AREA_FRACTION = 1;
   var REGION_MAX_PALETTE = 40;
-  var REGION_MAX_NUMBERED = 45;
+  var REGION_MAX_NUMBERED = 4000;
   var REGION_CLUSTER_DIST = 14;
 
   var state = {
@@ -368,21 +368,22 @@
     return { labels: labels, count: nextLabel, areas: areas, sumX: sumX, sumY: sumY, width: width, height: height };
   }
 
-  // Picks the dominant (most common) colour per region rather than a flat mean,
-  // so gradients / anti-aliased edge pixels don't wash a region's true colour toward grey.
+  // Picks the dominant (most common) colour per region rather than a flat mean, so
+  // gradients don't wash a region's true colour toward grey. Samples only "interior"
+  // pixels — at least one pixel in from any boundary with another region — since that's
+  // where outline anti-aliasing / bleed-through actually contaminates the sample. This
+  // is scene-agnostic: unlike a brightness cutoff, it doesn't assume the true colour is
+  // neither too dark nor too light (a night sky is legitimately dark; a hazy sky is
+  // legitimately near-white — both are valid "true colours" for their region).
   function averageColours(seg, refData) {
     var rd = refData.data;
+    var labels = seg.labels, width = seg.width, height = seg.height;
     var histograms = new Array(seg.count);
     for (var l = 0; l < seg.count; l++) histograms[l] = new Map();
 
-    for (var i = 0; i < seg.labels.length; i++) {
-      var label = seg.labels[i];
-      if (label === -1) continue;
+    function addSample(i, label) {
       var idx = i * 4;
       var r = rd[idx], g = rd[idx + 1], b = rd[idx + 2];
-      var luma = 0.299 * r + 0.587 * g + 0.114 * b;
-      if (luma < 60) continue; // likely outline bleed or deep shadow, not the region's true colour
-
       var key = (r >> 3) + "_" + (g >> 3) + "_" + (b >> 3);
       var hist = histograms[label];
       var entry = hist.get(key);
@@ -393,19 +394,38 @@
       }
     }
 
-    // Among the largest clusters for a region, prefer the brightest (best-lit) one —
-    // photo regions often span both sunlit and shadowed patches of the same surface,
-    // and the shadow cluster winning on raw pixel count reads as "muddy" rather than
-    // the colour a person would actually call that surface.
+    var interiorCount = new Int32Array(seg.count);
+    for (var y = 0; y < height; y++) {
+      for (var x = 0; x < width; x++) {
+        var i = y * width + x;
+        var label = labels[i];
+        if (label === -1) continue;
+        var interior =
+          (x === 0 || labels[i - 1] === label) &&
+          (x === width - 1 || labels[i + 1] === label) &&
+          (y === 0 || labels[i - width] === label) &&
+          (y === height - 1 || labels[i + width] === label);
+        if (!interior) continue;
+        addSample(i, label);
+        interiorCount[label]++;
+      }
+    }
+
+    // Thin regions can erode away to nothing — fall back to every pixel for those.
+    for (var y2 = 0; y2 < height; y2++) {
+      for (var x2 = 0; x2 < width; x2++) {
+        var i2 = y2 * width + x2;
+        var label2 = labels[i2];
+        if (label2 === -1 || interiorCount[label2] > 0) continue;
+        addSample(i2, label2);
+      }
+    }
+
     var colours = [];
     for (var lbl = 0; lbl < seg.count; lbl++) {
-      var entries = Array.from(histograms[lbl].values());
-      var maxCount = entries.reduce(function (m, e) { return Math.max(m, e.count); }, 0);
-      var contenders = entries.filter(function (e) { return e.count >= maxCount * 0.3; });
-      var best = null, bestLuma = -1;
-      contenders.forEach(function (e) {
-        var luma = e.sumR / e.count + e.sumG / e.count + e.sumB / e.count;
-        if (luma > bestLuma) { bestLuma = luma; best = e; }
+      var best = null;
+      histograms[lbl].forEach(function (entry) {
+        if (!best || entry.count > best.count) best = entry;
       });
       colours.push(best
         ? [Math.round(best.sumR / best.count), Math.round(best.sumG / best.count), Math.round(best.sumB / best.count)]
